@@ -10,5 +10,7 @@ type VPNManager interface {
 
 	RemovePeer(ctx context.Context, publicKey string) error
 
-	GenerateClientConfig(ctx context.Context, peer *Peer, serverPublicKey, serverEndpoint string) (string, error)
+	GenerateClientConfig(ctx context.Context, peer *Peer, clientPrivateKey, serverPrivateKey, serverEndpoint string) (string, error)
+
+	GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err error)
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
 )
 
+var _ domain.VPNManager = (*CLIAdapter)(nil)
+
 type CLIAdapter struct {
 	interfaceName string
 }
