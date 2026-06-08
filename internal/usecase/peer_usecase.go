@@ -11,7 +11,7 @@ import (
 type PeerUseCase struct {
 	repo           domain.PeerRepository
 	vpnManager     domain.VPNManager
-	network        domain.Network
+	network        *domain.Network
 	serverPubkey   string
 	serverEndpoint string
 }
@@ -19,7 +19,7 @@ type PeerUseCase struct {
 func NewPeerUseCase(
 	repo  domain.PeerRepository,
 	vpnManager domain.VPNManager,
-	network domain.Network,
+	network *domain.Network,
 	serverPubkey string,
 	serverEndpoint string,
 ) *PeerUseCase {
