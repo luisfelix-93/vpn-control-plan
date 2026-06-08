@@ -18,7 +18,7 @@ func main() {
 	// 1. Configurações base (Idealmente viriam de variáveis de ambiente .env)
 	dbPath := "./vpn.db"
 	vpnInterface := "wg0"
-	serverPubKey := os.Getenv("SERVER_PUB_KEY") // Chave pública do seu servidor
+	serverPubKey := os.Getenv("SERVER_girPUB_KEY") // Chave pública do seu servidor
 	serverEndpoint := "vpn.meudominio.com:51820" // Seu DDNS ou IP Público
 	vpnNetwork := &domain.Network{CIDR: "10.8.0.0/24"}
 
