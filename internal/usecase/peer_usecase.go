@@ -9,77 +9,80 @@ import (
 )
 
 type PeerUseCase struct {
-	repo           domain.PeerRepository
-	vpnManager     domain.VPNManager
-	network        *domain.Network
-	serverPubkey   string
-	serverEndpoint string
+	peerRepo domain.PeerRepository
+	clusterRepo domain.ClusterRepository
+	vpnManager domain.VPNManager
 }
+
 
 func NewPeerUseCase(
-	repo  domain.PeerRepository,
-	vpnManager domain.VPNManager,
-	network *domain.Network,
-	serverPubkey string,
-	serverEndpoint string,
+	peerRepo    domain.PeerRepository,
+	clusterRepo domain.ClusterRepository,
+	vpnManager  domain.VPNManager,
 ) *PeerUseCase {
 	return &PeerUseCase{
-		repo: repo,
-		vpnManager: vpnManager,
-		network: network,
-		serverPubkey: serverPubkey,
-		serverEndpoint: serverEndpoint,
-	}      
+		peerRepo:    peerRepo,
+		clusterRepo: clusterRepo,
+		vpnManager:  vpnManager,
+	}
 }
 
-// RegisterNewPeer executa o fluxo completo para adicionar um novo dispositivo à rede
-func (u *PeerUseCase) RegisterNewPeer(ctx context.Context, name string) (string, error) {
-	// 1. Gera o par de chave (Privada e Pública) via adaptador de rede
-	// Nota: a chave privada nunca será salva no banco, apenas entregue ao cliente agora.
-	privKey, pubKey, err := u.vpnManager.GenerateKeyPair(ctx)
+func (uc *PeerUseCase) RegisterNewPeer(ctx context.Context, clusterID, peerName string) (string, error) {
+	// 1. Valida se o Cluster (Zona de Rede) realmente existe
+	cluster, err := uc.clusterRepo.FindByID(ctx, clusterID)
+	if err != nil {
+		return "", fmt.Errorf("cluster inválido ou não encontrado: %w", err)
+	}
+
+	// 2. Gerar par de chaves para o Peer
+	privKey, pubKey, err := uc.vpnManager.GenerateKeyPair(ctx)
 	if err != nil {
 		return "", fmt.Errorf("falha ao gerar chaves: %w", err)
 	}
 
-	// 2. Cria um novo Peer
-	id := uuid.New().String()
-	peer, err := domain.NewPeer(id, name, pubKey)
+	// 3. Cria a entidade Peer vinculada ao Cluster
+	peerID := uuid.New().String()
+	peer, err := domain.NewPeer(peerID, cluster.ID, peerName, pubKey)
 	if err != nil {
-		return "", fmt.Errorf("falha ao criar peer: %w", err)
+		return "", fmt.Errorf("dados inválidos para o peer: %w", err)
 	}
 
-	// 3. Busca os IPs em uso e pede pro domínio calcular o próximo IP livre
-	usedIPs, err := u.repo.GetUsedIPs(ctx)
+	// 4. IPAM Dinâmico: Busca IPs em uso apenas neste cluster específico
+	usedIPs, err := uc.peerRepo.GetUsedIPs(ctx, cluster.ID)
 	if err != nil {
-		return "", fmt.Errorf("falha ao buscar IPs em uso: %w", err)
-	}
-	
-	nextIP, err := u.network.FindNextAvailableIP(usedIPs)
-	if err != nil {
-		return "", fmt.Errorf("falha ao buscar próximo IP: %w", err)
+		return "", fmt.Errorf("falha ao obter IPs usados: %w", err)
 	}
 
-	// 4. Atribui o IP ao Peer
+	// Instancia a rede dinamicamente usando o CIDR do cluster (ex: 10.9.0.0/24)
+	network, err := &domain.Network{CIDR: cluster.CIDR}, nil
+	if err != nil {
+		return "", fmt.Errorf("CIDR inválido no cluster: %w", err)
+	}
+	nextIP, err := network.FindNextAvailableIP(usedIPs)
+	if err != nil {
+		return "", fmt.Errorf("falha ao encontrar próximo IP disponível: %w", err)
+	}
+
 	if err := peer.AssignIP(nextIP); err != nil {
-		return "", fmt.Errorf("falha ao atribuir IP: %w", err)
+		return "", fmt.Errorf("falha ao alocar IP: %w", err)
 	}
 
-	// 5. Aplica a regra na infraestrutura real (Linux)
-	if err := u.vpnManager.AddPeer(ctx, pubKey, nextIP); err != nil {
-		return "", fmt.Errorf("falha ao adicionar peer: %w", err)
+	// 5. Aplica a regra no Linux apontando para a interface correta (ex: wg0-cloud)
+	if err := uc.vpnManager.AddPeer(ctx, cluster.InterfaceName, peer.PublicKey, peer.AllocatedIP); err != nil {
+		return "", fmt.Errorf("falha ao adicionar peer na interface: %w", err)
 	}
 
 	// 6. Persiste o estado no banco de dados
-	if err := u.repo.Save(ctx, peer); err != nil {
+	if err := uc.peerRepo.Save(ctx, peer); err != nil {
+		// Rollback direcionado para a interface correta
+		_ = uc.vpnManager.RemovePeer(context.Background(), cluster.InterfaceName, peer.PublicKey)
 		return "", fmt.Errorf("falha ao salvar peer: %w", err)
 	}
 
-	// 7. Gear o arquivo de configuração para o cliente final
-	clientConfig, err := u.vpnManager.GenerateClientConfig(ctx, peer, privKey, u.serverEndpoint, u.serverPubkey)
+	// 7. Retorna o arquivo de configuração (.conf) usando os dados do Cluster
+	clientConfig, err := uc.vpnManager.GenerateClientConfig(ctx, peer, privKey, cluster.ServerPubKey, cluster.ServerEndpoint)
 	if err != nil {
-		return "", fmt.Errorf("falha ao gerar arquivo de configuração: %w", err)
+		return "", fmt.Errorf("falha ao gerar configuração do cliente: %w", err)
 	}
-
 	return clientConfig, nil
-
 }

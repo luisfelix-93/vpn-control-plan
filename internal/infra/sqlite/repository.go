@@ -26,14 +26,17 @@ func NewPeerRepository(db *sql.DB) *PeerRepository {
 // dispensando ferramentas complexas de migração para um projeto desse escopo
 
 func (r *PeerRepository) InitSchema(ctx context.Context) error {
+	r.db.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
 	query := `
 	CREATE TABLE IF NOT EXISTS peers (
 		id TEXT PRIMARY KEY,
+		cluster_id TEXT NOT NULL,
 		name TEXT NOT NULL,
 		public_key TEXT NOT NULL UNIQUE,
 		allocated_ip TEXT NOT NULL UNIQUE,
 		is_revoked INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL
+		created_at DATETIME NOT NULL,
+		FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
 	);`
 
 	_, err := r.db.ExecContext(ctx, query)
@@ -48,9 +51,10 @@ func (r *PeerRepository) InitSchema(ctx context.Context) error {
 
 func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 	query := `
-	INSERT INTO peers (id, name, public_key, allocated_ip, is_revoked, created_at)
-	VALUES (?, ?, ?, ?, ?, ?)
+	INSERT INTO peers (id, cluster_id, name, public_key, allocated_ip, is_revoked, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
+		cluster_id = excluded.cluster_id,
 		name = excluded.name,
 		public_key = excluded.public_key,
 		allocated_ip = excluded.allocated_ip,
@@ -67,7 +71,7 @@ func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 		ipStr = peer.AllocatedIP.String()
 	}
 
-	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, peer.CreatedAt)
+	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.ClusterID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, peer.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("falha ao salvar peer: %w", err)
 	}
@@ -101,11 +105,11 @@ func (r *PeerRepository) FindByID(ctx context.Context, id string) (*domain.Peer,
 
 // GetUsedIPs atende à necessidade crítica do domínio para o IPAM
 
-func (r *PeerRepository) GetUsedIPs(ctx context.Context) ([]net.IP, error) {
-	query := `SELECT allocated_ip FROM peers WHERE allocated_ip IS NOT NULL`
-	rows, err := r.db.QueryContext(ctx, query)
+func (r *PeerRepository) GetUsedIPs(ctx context.Context, clusterID string) ([]net.IP, error) {
+	query := `SELECT allocated_ip FROM peers WHERE cluster_id = ? AND allocated_ip != ''`
+	rows, err := r.db.QueryContext(ctx, query, clusterID)
 	if err != nil {
-		return nil, fmt.Errorf("falha ao buscar IPs alocados: %w", err)
+		return nil, fmt.Errorf("falha ao buscar IPs: %w", err)
 	}
 	defer rows.Close()
 
@@ -113,17 +117,11 @@ func (r *PeerRepository) GetUsedIPs(ctx context.Context) ([]net.IP, error) {
 	for rows.Next() {
 		var ipStr string
 		if err := rows.Scan(&ipStr); err != nil {
-			return nil, fmt.Errorf("falha ao ler linha de IP: %w", err)
+			return nil, err
 		}
-		
 		if parsedIP := net.ParseIP(ipStr); parsedIP != nil {
 			ips = append(ips, parsedIP)
 		}
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("falha ao processar resultados: %w", err)
-	}
-
 	return ips, nil
 }

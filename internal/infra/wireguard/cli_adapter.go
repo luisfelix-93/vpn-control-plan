@@ -14,22 +14,19 @@ import (
 
 var _ domain.VPNManager = (*CLIAdapter)(nil)
 
-type CLIAdapter struct {
-	interfaceName string
-}
+type CLIAdapter struct{}
 
-func NewCLIAdapter(interfaceName string) *CLIAdapter {
-	return &CLIAdapter{
-		interfaceName: interfaceName,
-	}
+
+func NewCLIAdapter() *CLIAdapter {
+	return &CLIAdapter{}
 }
 
 // AddPeer executa wg set wg0 peer <PUBKEY> allowed-ipsd <IP>/32
 
-func (a *CLIAdapter) AddPeer(ctx context.Context, publicKey string, allowedIp net.IP) error {
+func (a *CLIAdapter) AddPeer(ctx context.Context, interfaceName, publicKey string, allowedIp net.IP) error {
 	ipCIDR := fmt.Sprintf("%s/32", allowedIp.String())
 
-	cmd := exec.CommandContext(ctx, "wg", "set", a.interfaceName, "peer", publicKey, "allowed-ips", ipCIDR)
+	cmd := exec.CommandContext(ctx, "wg", "set", interfaceName, "peer", publicKey, "allowed-ips", ipCIDR)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -42,9 +39,9 @@ func (a *CLIAdapter) AddPeer(ctx context.Context, publicKey string, allowedIp ne
 }
 
 // RemovePeer executa wg set wg0 peer <PUBKEY> remove
-func (a *CLIAdapter) RemovePeer(ctx context.Context, publicKey string) error {
-	cmd := exec.CommandContext(ctx, "wg", "set", a.interfaceName, "peer", publicKey, "remove")
-	
+func (a *CLIAdapter) RemovePeer(ctx context.Context, interfaceName, publicKey string) error {
+	cmd := exec.CommandContext(ctx, "wg", "set", interfaceName, "peer", publicKey, "remove")
+
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -60,28 +57,32 @@ func (a *CLIAdapter) RemovePeer(ctx context.Context, publicKey string) error {
 func (a *CLIAdapter) GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err error) {
 	genCmd := exec.CommandContext(ctx, "wg", "genkey")
 	privOut, err := genCmd.Output()
-
 	if err != nil {
 		return "", "", fmt.Errorf("falha ao gerar private key: %w", err)
 	}
-
 	privKey := strings.TrimSpace(string(privOut))
 
 	pubCmd := exec.CommandContext(ctx, "wg", "pubkey")
 	pubCmd.Stdin = strings.NewReader(privKey)
 	pubOut, err := pubCmd.Output()
-
 	if err != nil {
-		return "", "", fmt.Errorf("falha ao gerar public key: %w", err)
+		return "", "", fmt.Errorf("falha ao derivar public key: %w", err)
 	}
-
 	pubKey := strings.TrimSpace(string(pubOut))
 
 	return privKey, pubKey, nil
 }
 
-// GenerateClientConfig renderiza o payload que será entregue ao usuário (ex: via QR Code)
-func (a *CLIAdapter) GenerateClientConfig(ctx context.Context, peer *domain.Peer, clientPrivateKey, serverPrivateKey, serverEndpoint string) (string, error) {
+// GenerateClientConfig usa os dados do Cluster para montar o payload
+// GenerateClientConfig usa os dados do Cluster para montar o payload
+func (a *CLIAdapter) GenerateClientConfig(
+	ctx context.Context,
+	peer *domain.Peer,
+	serverPublicKey string,
+	endpoint string,
+	allowedIPs string,
+) (string, error) {
+	// build config using the 3 string params required by interface
 	const confTmpl = `[Interface]
 PrivateKey = {{.ClientPrivateKey}}
 Address = {{.ClientIP}}/32
@@ -90,14 +91,12 @@ DNS = 10.8.0.1 # Idealmente o IP do seu CoreDNS ou Pi-hole interno
 [Peer]
 PublicKey = {{.ServerPublicKey}}
 Endpoint = {{.ServerEndpoint}}
-# AllowedIPs define o roteamento. Se quiser split-tunnel (apenas acesso ao lab), coloque a sub-rede do lab.
-# Se quiser Full Tunnel (todo tráfego de internet via sua casa), use 0.0.0.0/0
-AllowedIPs = 10.8.0.0/24, 192.168.1.0/24
+AllowedIPs = {{.AllowedIPs}}
 PersistentKeepalive = 25
 `
 	t, err := template.New("wgconf").Parse(confTmpl)
 	if err != nil {
-		return "", fmt.Errorf("falha ao criar template: %w", err)
+		return "", fmt.Errorf("falha ao parsear template do wireguard: %w", err)
 	}
 
 	data := struct {
@@ -105,18 +104,18 @@ PersistentKeepalive = 25
 		ClientIP         string
 		ServerPublicKey  string
 		ServerEndpoint   string
+		AllowedIPs       string
 	}{
-		ClientPrivateKey: clientPrivateKey,
-		ClientIP:         peer.AllocatedIP.String(),
-		ServerPublicKey:  serverPrivateKey,
-		ServerEndpoint:   serverEndpoint,
+		ClientIP:        peer.AllocatedIP.String(),
+		ServerPublicKey: serverPublicKey,
+		ServerEndpoint:  endpoint,
+		AllowedIPs:      allowedIPs,
 	}
 
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("falha ao renderizar template: %w", err)
+		return "", fmt.Errorf("falha ao renderizar arquivo de configuracao: %w", err)
 	}
 
 	return buf.String(), nil
-
 }

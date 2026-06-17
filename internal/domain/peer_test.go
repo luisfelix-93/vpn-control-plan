@@ -7,7 +7,7 @@ import (
 
 func TestNewPeer(t *testing.T) {
 	t.Run("Deve criar um Peer válido", func(t *testing.T){
-		peer, err := NewPeer("client-1", "iPhone", "based-pub-key")
+		peer, err := NewPeer("client-1", "iPhone", "based-pub-key", "cluster-1")
 		if err != nil {
 			t.Fatalf("esperava sucesso, recebeu erro: %v", err)
 		}
@@ -17,7 +17,7 @@ func TestNewPeer(t *testing.T) {
 	})
 
 	t.Run("Deve falhar ao criar Peer sem dados obrigatórios", func(t *testing.T){
-		_, err := NewPeer("client-2", "", "")
+		_, err := NewPeer("client-2", "", "", "")
 		if err != ErrInvalidPeerData {
 			t.Errorf("esperava ErrInvalidPeerData, recebeu: %v", err)
 		}
@@ -25,7 +25,7 @@ func TestNewPeer(t *testing.T) {
 }
 
 func TestPeer_AssignIP(t *testing.T) {
-	peer, _ := NewPeer("client-1", "iPhone", "key")
+	peer, _ := NewPeer("client-1", "iPhone", "key", "cluster-1")
 	ip := net.ParseIP("10.8.0.2")
 
 	t.Run("Deve atribuir IP com sucesso", func(t *testing.T) {

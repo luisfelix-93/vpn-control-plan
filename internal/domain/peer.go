@@ -14,13 +14,14 @@ var (
 type Peer struct {
 	ID         		string
 	Name       		string
+	ClusterID  		string
 	PublicKey  		string
 	AllocatedIP     net.IP
 	IsRevoked       bool
 	CreatedAt       time.Time
 }
 
-func NewPeer(id, name, publicKey string) (*Peer, error) {
+func NewPeer(id, name, publicKey, clusterID string) (*Peer, error) {
 	if name == "" || publicKey == "" {
 		return nil, ErrInvalidPeerData
 	}
@@ -29,6 +30,7 @@ func NewPeer(id, name, publicKey string) (*Peer, error) {
 		ID:         id,
 		Name:       name,
 		PublicKey:  publicKey,
+		ClusterID: clusterID,
 		// AllocatedIP: nil,
 		IsRevoked:  false,
 		CreatedAt:  time.Now(),
