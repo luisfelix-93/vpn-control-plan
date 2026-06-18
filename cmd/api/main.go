@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/sqlite"
@@ -15,46 +14,57 @@ import (
 )
 
 func main() {
-	// 1. Configurações base (Idealmente viriam de variáveis de ambiente .env)
 	dbPath := "./vpn.db"
-	vpnInterface := "wg0"
-	serverPubKey := os.Getenv("SERVER_girPUB_KEY") // Chave pública do seu servidor
-	serverEndpoint := "vpn.meudominio.com:51820" // Seu DDNS ou IP Público
-	vpnNetwork := &domain.Network{CIDR: "10.8.0.0/24"}
 
-	if serverPubKey == "" {
-		log.Println("Aviso: SERVER_PUB_KEY não definida. O arquivo de configuração gerado estará incompleto.")
-	}
-
-	// 2. Inicializa o Banco de Dados (Infra)
+	// 1. Inicializa o Banco de Dados
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Fatalf("Falha ao abrir o banco: %v", err)
 	}
 	defer db.Close()
 
-	repo := sqlite.NewPeerRepository(db)
-	if err := repo.InitSchema(context.Background()); err != nil {
-		log.Fatalf("Falha ao criar tabelas: %v", err)
+	// 2. Repositórios e Schemas
+	clusterRepo := sqlite.NewClusterRepository(db)
+	if err := clusterRepo.InitSchema(context.Background()); err != nil {
+		log.Fatalf("Falha no schema de clusters: %v", err)
 	}
 
-	// 3. Inicializa o Adaptador de Rede (Infra)
-	vpnAdapter := wireguard.NewCLIAdapter(vpnInterface)
+	peerRepo := sqlite.NewPeerRepository(db)
+	if err := peerRepo.InitSchema(context.Background()); err != nil {
+		log.Fatalf("Falha no schema de peers: %v", err)
+	}
 
-	// 4. Inicializa os Casos de Uso (Application Layer)
-	peerUseCase := usecase.NewPeerUseCase(repo, vpnAdapter, vpnNetwork, serverPubKey, serverEndpoint)
+	// Função utilitária para garantir que temos Redes para testar
+	seedClusters(clusterRepo)
 
-	// 5. Inicializa os Controladores HTTP (Presentation Layer)
+	// 3. Adaptador de Rede (Agora Stateless)
+	vpnAdapter := wireguard.NewCLIAdapter()
+
+	// 4. Orquestração (Injetando as novas dependências)
+	peerUseCase := usecase.NewPeerUseCase(peerRepo, clusterRepo, vpnAdapter)
+
+	// 5. API
 	peerHandler := presentation.NewPeerHandler(peerUseCase)
 
-	// 6. Configura as Rotas (Usando o roteador nativo do Go 1.22+)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /peers", peerHandler.Register)
 
-	// 7. Sobe o Servidor
 	port := ":8080"
-	log.Printf("Control Plane da VPN rodando na porta %s...", port)
+	log.Printf("VPN Control Plane (Multi-Cluster) rodando na porta %s...", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
 		log.Fatalf("Servidor caiu: %v", err)
 	}
+}
+
+// seedClusters insere dados iniciais para você não precisar inserir na mão agora
+func seedClusters(repo domain.ClusterRepository) {
+	ctx := context.Background()
+	
+	// Cluster 1: O seu Homelab Local
+	c1, _ := domain.NewCluster("cluster-homelab", "Homelab Local", "10.8.0.0/24", "wg0", "PUB_KEY_LAB", "192.168.1.50:51820")
+	_ = repo.Save(ctx, c1)
+
+	// Cluster 2: A sua VPS na nuvem atuando como Exit Node (Torrents/Privacidade)
+	c2, _ := domain.NewCluster("cluster-cloud", "Exit Node Cloud", "10.9.0.0/24", "wg-cloud", "PUB_KEY_CLOUD", "189.20.30.40:51820")
+	_ = repo.Save(ctx, c2)
 }
