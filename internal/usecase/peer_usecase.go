@@ -54,10 +54,7 @@ func (uc *PeerUseCase) RegisterNewPeer(ctx context.Context, clusterID, peerName 
 	}
 
 	// Instancia a rede dinamicamente usando o CIDR do cluster (ex: 10.9.0.0/24)
-	network, err := &domain.Network{CIDR: cluster.CIDR}, nil
-	if err != nil {
-		return "", fmt.Errorf("CIDR inválido no cluster: %w", err)
-	}
+	network := &domain.Network{CIDR: cluster.CIDR}
 	nextIP, err := network.FindNextAvailableIP(usedIPs)
 	if err != nil {
 		return "", fmt.Errorf("falha ao encontrar próximo IP disponível: %w", err)
