@@ -40,10 +40,7 @@ func (uc *PeerUseCase) RegisterNewPeer(ctx context.Context, clusterID, peerName 
 		return "", fmt.Errorf("falha ao gerar chaves: %w", err)
 	}
 
-	// 3. Cria a entidade Peer vinculada ao Cluster
-	peerID := uuid.New().String()
-	peer, err := domain.NewPeer(peerID, cluster.ID, peerName, pubKey)
-	if err != nil {
+	peer, err := domain.NewPeer(peerID, peerName, pubKey, cluster.ID)
 		return "", fmt.Errorf("dados inválidos para o peer: %w", err)
 	}
 
