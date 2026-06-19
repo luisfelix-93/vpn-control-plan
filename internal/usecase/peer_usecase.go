@@ -9,16 +9,15 @@ import (
 )
 
 type PeerUseCase struct {
-	peerRepo domain.PeerRepository
+	peerRepo    domain.PeerRepository
 	clusterRepo domain.ClusterRepository
-	vpnManager domain.VPNManager
+	vpnManager  domain.VPNManager
 }
 
-
 func NewPeerUseCase(
-	peerRepo    domain.PeerRepository,
+	peerRepo domain.PeerRepository,
 	clusterRepo domain.ClusterRepository,
-	vpnManager  domain.VPNManager,
+	vpnManager domain.VPNManager,
 ) *PeerUseCase {
 	return &PeerUseCase{
 		peerRepo:    peerRepo,
@@ -40,7 +39,9 @@ func (uc *PeerUseCase) RegisterNewPeer(ctx context.Context, clusterID, peerName 
 		return "", fmt.Errorf("falha ao gerar chaves: %w", err)
 	}
 
+	peerID := uuid.NewString()
 	peer, err := domain.NewPeer(peerID, peerName, pubKey, cluster.ID)
+	if err != nil {
 		return "", fmt.Errorf("dados inválidos para o peer: %w", err)
 	}
 
@@ -74,7 +75,7 @@ func (uc *PeerUseCase) RegisterNewPeer(ctx context.Context, clusterID, peerName 
 	}
 
 	// 7. Retorna o arquivo de configuração (.conf) usando os dados do Cluster
-	clientConfig, err := uc.vpnManager.GenerateClientConfig(ctx, peer, privKey, cluster.ServerPubKey, cluster.ServerEndpoint)
+	clientConfig, err := uc.vpnManager.GenerateClientConfig(ctx, peer, privKey, cluster.ServerPubKey, cluster.ServerEndpoint, cluster.CIDR)
 	if err != nil {
 		return "", fmt.Errorf("falha ao gerar configuração do cliente: %w", err)
 	}

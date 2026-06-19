@@ -16,7 +16,6 @@ var _ domain.VPNManager = (*CLIAdapter)(nil)
 
 type CLIAdapter struct{}
 
-
 func NewCLIAdapter() *CLIAdapter {
 	return &CLIAdapter{}
 }
@@ -78,6 +77,7 @@ func (a *CLIAdapter) GenerateKeyPair(ctx context.Context) (privateKey, publicKey
 func (a *CLIAdapter) GenerateClientConfig(
 	ctx context.Context,
 	peer *domain.Peer,
+	clientPrivateKey string,
 	serverPublicKey string,
 	endpoint string,
 	allowedIPs string,
@@ -106,10 +106,11 @@ PersistentKeepalive = 25
 		ServerEndpoint   string
 		AllowedIPs       string
 	}{
-		ClientIP:        peer.AllocatedIP.String(),
-		ServerPublicKey: serverPublicKey,
-		ServerEndpoint:  endpoint,
-		AllowedIPs:      allowedIPs,
+		ClientPrivateKey: clientPrivateKey,
+		ClientIP:         peer.AllocatedIP.String(),
+		ServerPublicKey:  serverPublicKey,
+		ServerEndpoint:   endpoint,
+		AllowedIPs:       allowedIPs,
 	}
 
 	var buf bytes.Buffer
