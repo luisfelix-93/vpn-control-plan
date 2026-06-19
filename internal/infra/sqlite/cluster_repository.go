@@ -85,3 +85,29 @@ func (r *ClusterRepositoryImpl) FindByID(ctx context.Context, id string) (*domai
 	c.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	return &c, nil
 }
+
+func (r *ClusterRepositoryImpl) GetAll(ctx context.Context) ([]*domain.Cluster, error) {
+	query := `
+	SELECT id, name, cidr, interface_name, server_pub_key, server_endpoint, created_at 
+	FROM clusters`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar clusters: %w", err)
+	}
+	defer rows.Close()
+
+	var clusters []*domain.Cluster
+	for rows.Next() {
+		var c domain.Cluster
+		var createdAt string
+		if err := rows.Scan(&c.ID, &c.Name, &c.CIDR, &c.InterfaceName, &c.ServerPubKey, &c.ServerEndpoint, &createdAt); err != nil {
+			return nil, fmt.Errorf("falha ao escanear cluster: %w", err)
+		}
+		c.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		clusters = append(clusters, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("erro ao iterar sobre os clusters: %w", err)
+	}
+	return clusters, nil
+}
