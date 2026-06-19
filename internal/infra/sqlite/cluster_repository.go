@@ -48,11 +48,11 @@ func (r * ClusterRepositoryImpl) Save(ctx context.Context, cluster *domain.Clust
 	INSERT INTO clusters (id, name, cidr, interface_name, server_pub_key, server_endpoint, created_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
-	name = excluded.name,
-	cidr = excluded.cidr,
-	interface_name = excluded.interface_name,
-	server_pub_key = excluded.server_pub_key,
-	server_endpoint = excluded.server_endpoint,
+		name = excluded.name,
+		cidr = excluded.cidr,
+		interface_name = excluded.interface_name,
+		server_pub_key = excluded.server_pub_key,
+		server_endpoint = excluded.server_endpoint;
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
