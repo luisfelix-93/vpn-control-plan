@@ -11,6 +11,7 @@ import (
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/sqlite"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/wireguard"
 	presentation "github.com/luisfelix-93/vpn-control-plane/internal/presentation/http"
+	"github.com/luisfelix-93/vpn-control-plane/internal/presentation/http/middleware"
 	"github.com/luisfelix-93/vpn-control-plane/internal/usecase"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -54,8 +55,8 @@ func main() {
 	clusterHandler := presentation.NewClusterHandler(clusterUseCase)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /clusters", clusterHandler.Create)
-	mux.HandleFunc("POST /peers", peerHandler.Register)
+	mux.HandleFunc("POST /clusters", middleware.MetricsMiddleware("/clusters", clusterHandler.Create))
+	mux.HandleFunc("POST /peers", middleware.MetricsMiddleware("/peers", peerHandler.Register))
 	mux.Handle("GET /metrics", promhttp.Handler())
 
 	port := ":8080"
