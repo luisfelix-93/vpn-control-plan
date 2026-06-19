@@ -17,7 +17,7 @@ func main() {
 	dbPath := "./vpn.db"
 
 	// 1. Inicializa o Banco de Dados
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("Falha ao abrir o banco: %v", err)
 	}
