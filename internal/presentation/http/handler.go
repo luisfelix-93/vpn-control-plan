@@ -39,7 +39,7 @@ func (h *PeerHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// Chama a orquestração passando o ID da zona de rede
 	clientConfig, err := h.useCase.RegisterNewPeer(r.Context(), req.ClusterID, req.Name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Erro ao registrar cliente", http.StatusInternalServerError)
 		return
 	}
 
