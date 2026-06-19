@@ -10,4 +10,5 @@ type PeerRepository interface {
 	Save(ctx context.Context, peer *Peer) error
 	FindByID(ctx context.Context, id string) (*Peer, error)
 	GetUsedIPs(ctx context.Context, clusterID string) ([]net.IP, error)
+	CountByCluster(ctx context.Context, clusterID string) (int, error)
 }

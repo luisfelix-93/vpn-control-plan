@@ -18,3 +18,5 @@ go.work.sum
 
 # Optional vendored dependencies
 # vendor/
+
+docs/

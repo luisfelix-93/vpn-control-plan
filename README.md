@@ -1,6 +1,6 @@
 # VPN Control Plane (Multi-Cluster)
 
-> **Versão atual:** `be6a19c` (pré-release)
+> **Versão atual:** `31ee5f4` (pré-release)
 
 API HTTP em Go para provisionar peers WireGuard com suporte a múltiplas zonas de rede (clusters). O serviço permite cadastrar clusters com configurações independentes (CIDR, interface, endpoint) e, dentro de cada cluster, provisionar peers com geração de chaves, IPAM dinâmico, aplicação na interface WireGuard e retorno do arquivo de configuração do cliente.
 
@@ -42,11 +42,14 @@ O projeto está organizado em camadas:
 - `internal/usecase`: orquestração dos casos de uso (`PeerUseCase`, `ClusterUseCase`).
 - `internal/infra/sqlite`: persistência em SQLite (repositórios de peer e cluster).
 - `internal/infra/wireguard`: integração com a CLI do WireGuard.
+- `internal/infra/metrics`: coletor de métricas de negócio em background (total de clusters e peers).
 - `internal/presentation/http`: handlers HTTP (`PeerHandler`, `ClusterHandler`).
+- `internal/presentation/http/middleware`: middleware de métricas RED (taxa, erros e duração das requisições).
 
 ## Requisitos
 
 - Go 1.24.4 ou compatível com o módulo.
+- Dependência Prometheus (`github.com/prometheus/client_golang`) para exposição de métricas.
 - WireGuard instalado no host com o binário `wg` disponível no PATH.
 - Interfaces WireGuard já existentes no host para cada cluster criado.
 - Permissão para executar comandos que alterem a configuração das interfaces WireGuard.
@@ -79,6 +82,7 @@ Ao iniciar corretamente, o serviço:
 
 - cria o arquivo SQLite `vpn.db` no diretório atual, se necessário;
 - inicializa as tabelas `clusters` e `peers`;
+- inicia o coletor de métricas em background (atualização a cada 15 segundos);
 - expõe a API HTTP em `http://localhost:8080`.
 
 ## Endpoints disponíveis
@@ -183,6 +187,32 @@ Erros esperados:
 - `400 Bad Request` para JSON inválido, `name` ou `clusterId` ausentes.
 - `500 Internal Server Error` para falhas na geração de chaves, validação do cluster, aplicação do peer, persistência ou geração do arquivo de configuração.
 
+---
+
+### `GET /metrics`
+
+Expõe métricas no formato Prometheus para monitoramento.
+
+Exemplo com `curl`:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+**Métricas RED** (coletadas por request):
+
+| Métrica | Tipo | Labels | Descrição |
+|---------|------|--------|-----------|
+| `http_requests_total` | Counter | `method`, `route`, `status` | Total de requisições HTTP |
+| `http_request_duration_seconds` | Histogram | `method`, `route` | Duração das requisições |
+
+**Métricas de negócio** (atualizadas em background a cada 15s):
+
+| Métrica | Tipo | Labels | Descrição |
+|---------|------|--------|-----------|
+| `vpn_clusters_total` | Gauge | — | Número total de clusters |
+| `total_peers` | GaugeVec | `cluster_id` | Total de peers por cluster |
+
 ## Banco de dados
 
 O repositório SQLite cria automaticamente as seguintes tabelas:
@@ -236,6 +266,14 @@ Os testes hoje cobrem principalmente:
 - criação e regras da entidade `Peer`;
 - cálculo do próximo IP disponível na rede.
 
+## Métricas e observabilidade
+
+A partir da versão `31ee5f4`, o projeto conta com:
+
+- **Métricas RED** (`http_requests_total`, `http_request_duration_seconds`): coletadas via middleware HTTP para todas as requisições, permitindo monitorar taxa de erros, throughput e latência por rota.
+- **Métricas de negócio** (`vpn_clusters_total`, `total_peers`): coletadas em background a cada 15 segundos pelo `CollectorService`, refletindo o estado atual do banco.
+- **Endpoint `/metrics`** no formato Prometheus, pronto para ser coletado pelo Prometheus e visualizado no Grafana.
+
 ## Limitações atuais
 
 O projeto está funcional como prova de conceito, mas ainda tem algumas limitações importantes:
@@ -245,7 +283,8 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - parte da configuração (porta, caminho do banco) ainda está hardcoded no código;
 - a integração com WireGuard depende da CLI `wg` e de permissões no host;
 - o retorno de peers é texto puro, sem metadados estruturados;
-- o DNS no template de configuração do cliente está fixo em `10.8.0.1`.
+- o DNS no template de configuração do cliente está fixo em `10.8.0.1`;
+- métricas de negócio têm uma condição invertida no `collectMetrics` que impede a atualização correta quando o banco retorna dados (apenas atualiza em caso de erro).
 
 ## Próximos passos naturais
 
@@ -254,4 +293,5 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - incluir autenticação da API;
 - adicionar logs estruturados e observabilidade;
 - tornar o servidor DNS configurável por cluster;
-- permitir configuração de `AllowedIPs` por peer ou cluster.
+- permitir configuração de `AllowedIPs` por peer ou cluster;
+- corrigir a condição do `collectMetrics` no coletor de métricas de negócio.

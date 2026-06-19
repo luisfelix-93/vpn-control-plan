@@ -125,3 +125,14 @@ func (r *PeerRepository) GetUsedIPs(ctx context.Context, clusterID string) ([]ne
 	}
 	return ips, nil
 }
+
+func (r *PeerRepository) CountByCluster(ctx context.Context, clusterID string) (int, error) {
+	query := `SELECT COUNT(*) FROM peers WHERE cluster_id = ?`
+	row := r.db.QueryRowContext(ctx, query, clusterID)
+
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("falha ao contar peers: %w", err)
+	}
+	return count, nil
+}
