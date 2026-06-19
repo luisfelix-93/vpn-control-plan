@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
+
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/sqlite"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/wireguard"
 	presentation "github.com/luisfelix-93/vpn-control-plane/internal/presentation/http"
@@ -35,18 +35,21 @@ func main() {
 	}
 
 	// Função utilitária para garantir que temos Redes para testar
-	seedClusters(clusterRepo)
+	
 
 	// 3. Adaptador de Rede (Agora Stateless)
 	vpnAdapter := wireguard.NewCLIAdapter()
 
 	// 4. Orquestração (Injetando as novas dependências)
 	peerUseCase := usecase.NewPeerUseCase(peerRepo, clusterRepo, vpnAdapter)
+	clusterUseCase := usecase.NewClusterUseCase(clusterRepo)
 
 	// 5. API
 	peerHandler := presentation.NewPeerHandler(peerUseCase)
+	clusterHandler := presentation.NewClusterHandler(clusterUseCase)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /clusters", clusterHandler.Create)
 	mux.HandleFunc("POST /peers", peerHandler.Register)
 
 	port := ":8080"
@@ -56,15 +59,3 @@ func main() {
 	}
 }
 
-// seedClusters insere dados iniciais para você não precisar inserir na mão agora
-func seedClusters(repo domain.ClusterRepository) {
-	ctx := context.Background()
-	
-	// Cluster 1: O seu Homelab Local
-	c1, _ := domain.NewCluster("cluster-homelab", "Homelab Local", "10.8.0.0/24", "wg0", "PUB_KEY_LAB", "192.168.1.50:51820")
-	_ = repo.Save(ctx, c1)
-
-	// Cluster 2: A sua VPS na nuvem atuando como Exit Node (Torrents/Privacidade)
-	c2, _ := domain.NewCluster("cluster-cloud", "Exit Node Cloud", "10.9.0.0/24", "wg-cloud", "PUB_KEY_CLOUD", "189.20.30.40:51820")
-	_ = repo.Save(ctx, c2)
-}
