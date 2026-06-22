@@ -36,9 +36,30 @@ func (r *ClusterRepositoryImpl) InitSchema(ctx context.Context) error {
 		last_heartbeat DATETIME,
 		created_at DATETIME NOT NULL
 	);`
-
 	_, err := r.db.ExecContext(ctx, query)
-	return err
+	if err != nil {
+		return fmt.Errorf("falha ao inicializar schema do sqlite: %w", err)
+	}
+
+	queryLatencies := `
+	CREATE TABLE IF NOT EXISTS cluster_latencies (
+		source_id TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		latency_ms REAL NOT NULL,
+		measured_at DATETIME NOT NULL,
+		PRIMARY KEY (source_id, target_id),
+		FOREIGN KEY(source_id) REFERENCES clusters(id) ON DELETE CASCADE,
+		FOREIGN KEY(target_id) REFERENCES clusters(id) ON DELETE CASCADE
+	);`
+
+	_, err = r.db.ExecContext(ctx, queryLatencies)
+	if err != nil {
+		return fmt.Errorf("falha ao inicializar schema de latencias: %w", err)
+	}
+
+	return nil
+
+
 }
 // Save permite cadastrar ou atualizar um cluster
 func (r * ClusterRepositoryImpl) Save(ctx context.Context, cluster *domain.Cluster) error {
@@ -125,4 +146,45 @@ func (r *ClusterRepositoryImpl) RecordHeartbeat(ctx context.Context, id, status 
 		return fmt.Errorf("cluster não encontrado")
 	}
 	return nil	
+}
+
+func (r *ClusterRepositoryImpl) RecordLatency(ctx context.Context, latency *domain.ClusterLatency) error {
+
+	query := `
+	INSERT INTO cluster_latencies (source_id, target_id, latency_ms, measured_at)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(source_id, target_id) DO UPDATE SET
+		latency_ms = excluded.latency_ms,
+		measured_at = excluded.measured_at;
+	`
+	_, err := r.db.ExecContext(ctx, query, latency.SourceClusterID, latency.TargetClusterID, latency.LatencyMS, latency.MeasuredAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("falha ao registrar latência: %w", err)
+	}
+	return nil
+}
+
+
+func (r *ClusterRepositoryImpl) GetLatencyFrom(ctx context.Context, sourceID string) ([]*domain.ClusterLatency, error) {
+	query := `SELECT source_id, target_id, latency_ms, measured_at FROM cluster_latencies WHERE source_id = ?`
+	rows, err := r.db.QueryContext(ctx, query, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao consultar latências: %w", err)
+	}
+	defer rows.Close()
+
+	var latencies []*domain.ClusterLatency
+	for rows.Next() {
+		var l domain.ClusterLatency
+		var measuredAt string
+		if err := rows.Scan(&l.SourceClusterID, &l.TargetClusterID, &l.LatencyMS, &measuredAt); err != nil {
+			return nil, fmt.Errorf("falha ao escanear latência: %w", err)
+		}
+		l.MeasuredAt, _ = time.Parse(time.RFC3339, measuredAt)
+		latencies = append(latencies, &l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("erro ao iterar sobre as latências: %w", err)
+	}
+	return latencies, nil
 }
