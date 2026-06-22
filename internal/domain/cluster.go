@@ -9,6 +9,12 @@ var (
 	ErrInvalidClusterData = errors.New("nome, cidr e interface são obrigatórios para um cluster")
 )
 
+const (
+	ClusterStatusOnline = "online"
+	ClusterStatusOffline = "offline"
+	ClusterStatusUnknown = "unknown"
+)
+
 // Cluster representa uma zona de rede isolada
 
 type Cluster struct {
@@ -18,6 +24,8 @@ type Cluster struct {
 	InterfaceName   string
 	ServerPubKey    string
 	ServerEndpoint  string
+	Status          string
+	LastHeartbeat   time.Time
 	CreatedAt       time.Time
 }
 
@@ -34,6 +42,7 @@ func NewCluster(id, name, cidr, interfaceName, pubKey, endpoint string) (*Cluste
 		InterfaceName:  interfaceName,
 		ServerPubKey:   pubKey,
 		ServerEndpoint: endpoint,
+		Status:         ClusterStatusUnknown,
 		CreatedAt:      time.Now(),
 	}, nil
 }

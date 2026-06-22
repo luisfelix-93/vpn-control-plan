@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
@@ -31,4 +32,13 @@ func (uc *ClusterUseCase) CreateCluster(ctx context.Context, name, cidr, interfa
 	}
 
 	return cluster, nil
+}
+
+func (uc *ClusterUseCase) ProcessHeartbeat(ctx context.Context, id string) error {
+	now := time.Now()
+	err := uc.repo.RecordHeartbeat(ctx, id, domain.ClusterStatusOnline, now)
+	if err != nil {
+		return fmt.Errorf("falha ao processar heartbeat: %w", err)
+	}
+	return nil
 }
