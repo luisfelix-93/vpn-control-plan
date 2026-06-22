@@ -1,6 +1,6 @@
 # VPN Control Plane (Multi-Cluster)
 
-> **Versão atual:** `31ee5f4` (pré-release)
+> **Versão atual:** `dcf5a79` (branch `feature/health-check`)
 
 API HTTP em Go para provisionar peers WireGuard com suporte a múltiplas zonas de rede (clusters). O serviço permite cadastrar clusters com configurações independentes (CIDR, interface, endpoint) e, dentro de cada cluster, provisionar peers com geração de chaves, IPAM dinâmico, aplicação na interface WireGuard e retorno do arquivo de configuração do cliente.
 
@@ -43,6 +43,8 @@ O projeto está organizado em camadas:
 - `internal/infra/sqlite`: persistência em SQLite (repositórios de peer e cluster).
 - `internal/infra/wireguard`: integração com a CLI do WireGuard.
 - `internal/infra/metrics`: coletor de métricas de negócio em background (total de clusters e peers).
+- `internal/infra/health`: serviço de health check que pinga peers periodicamente em background.
+- `internal/infra/network`: utilitário de ping via syscall (`ping -c 1 -W 1`).
 - `internal/presentation/http`: handlers HTTP (`PeerHandler`, `ClusterHandler`).
 - `internal/presentation/http/middleware`: middleware de métricas RED (taxa, erros e duração das requisições).
 
@@ -189,6 +191,28 @@ Erros esperados:
 
 ---
 
+### `POST /clusters/{id}/heartbeat`
+
+Registra um heartbeat para o cluster, atualizando seu status para `online` e o timestamp `last_heartbeat`.
+
+Exemplo com `curl`:
+
+```bash
+curl -X POST http://localhost:8080/clusters/<id>/heartbeat
+```
+
+Resposta de sucesso:
+
+- Status: `200 OK`
+- Corpo: `ACK`
+
+Erros esperados:
+
+- `400 Bad Request` se o ID do cluster não for informado na URL.
+- `500 Internal Server Error` se o cluster não existir ou houver falha de persistência.
+
+---
+
 ### `GET /metrics`
 
 Expõe métricas no formato Prometheus para monitoramento.
@@ -211,7 +235,7 @@ curl http://localhost:8080/metrics
 | Métrica | Tipo | Labels | Descrição |
 |---------|------|--------|-----------|
 | `vpn_clusters_total` | Gauge | — | Número total de clusters |
-| `total_peers` | GaugeVec | `cluster_id` | Total de peers por cluster |
+| `total_peers` | GaugeVec | `cluster_id`, `status` | Total de peers por cluster e por status |
 
 ## Banco de dados
 
@@ -243,6 +267,20 @@ O repositório SQLite cria automaticamente as seguintes tabelas:
 
 O projeto usa SQLite local e não depende de um servidor externo de banco de dados.
 
+### `clusters` (colunas adicionais na branch `feature/health-check`)
+
+| Coluna          | Tipo     |
+|-----------------|----------|
+| `status`        | TEXT     |
+| `last_heartbeat`| DATETIME |
+
+### `peers` (colunas adicionais na branch `feature/health-check`)
+
+| Coluna      | Tipo     |
+|-------------|----------|
+| `status`    | TEXT     |
+| `last_seen` | DATETIME |
+
 ## Regras de rede
 
 O domínio trata a sub-rede de cada cluster como pool de IPs e evita:
@@ -266,6 +304,39 @@ Os testes hoje cobrem principalmente:
 - criação e regras da entidade `Peer`;
 - cálculo do próximo IP disponível na rede.
 
+## Health Check e Heartbeat (feature/health-check)
+
+A partir dos commits mais recentes na branch `feature/health-check`, o projeto conta com dois mecanismos de monitoramento de conectividade:
+
+### Heartbeat de Clusters (`POST /clusters/{id}/heartbeat`)
+
+Mecanismo passivo: o próprio cluster (ou um agente externo) envia um POST periódico para o endpoint informando que está ativo. O servidor registra o status `online` e o timestamp `last_heartbeat`. Se um cluster deixa de enviar heartbeats, o status pode ser interpretado como `offline` por um sistema externo.
+
+- **Endpoint:** `POST /clusters/{id}/heartbeat`
+- **Resposta:** `200 OK` com body `ACK`
+- **Uso planejado:** agentes rodando nos servidores WireGuard enviam heartbeats a cada N segundos/minutos.
+
+### Health Check de Peers (ping em background)
+
+Mecanismo ativo: um serviço background (`CheckerService`) executa periodicamente (a cada 1 minuto) um ping ICMP para cada peer não revogado, utilizando o utilitário de sistema `ping -c 1 -W 1`.
+
+- Os peers são avaliados concorrentemente (uma goroutine por peer, sincronizadas via `sync.WaitGroup`).
+- Se o ping responde, o status é atualizado para `online` e o campo `last_seen` recebe o timestamp atual.
+- Se o ping falha, o status é atualizado para `offline` (o `last_seen` não é alterado).
+- Para evitar escrita desnecessária no banco, a atualização só ocorre se houve mudança de status ou se o peer ficou online.
+- Peers revogados ou sem IP alocado são ignorados.
+
+### Status Tracking
+
+Tanto `Cluster` quanto `Peer` agora possuem campos de status:
+
+| Entidade | Campo Status | Valores | Campo Temporal |
+|----------|-------------|---------|----------------|
+| Cluster  | `Status`    | `online`, `offline`, `unknown` | `LastHeartbeat` |
+| Peer     | `Status`    | `online`, `offline`, `unknown` | `LastSeen` |
+
+O valor padrão na criação é `unknown`. O status é persistido no banco SQLite e pode ser exposto via métricas ou consultas futuras.
+
 ## Métricas e observabilidade
 
 A partir da versão `31ee5f4`, o projeto conta com:
@@ -278,13 +349,15 @@ A partir da versão `31ee5f4`, o projeto conta com:
 
 O projeto está funcional como prova de conceito, mas ainda tem algumas limitações importantes:
 
-- apenas endpoints de criação de cluster e peer (sem listagem, revogação ou remoção);
+- apenas endpoints de criação de cluster e peer e heartbeat (sem listagem, revogação ou remoção);
 - não há autenticação nem autorização na API;
 - parte da configuração (porta, caminho do banco) ainda está hardcoded no código;
 - a integração com WireGuard depende da CLI `wg` e de permissões no host;
 - o retorno de peers é texto puro, sem metadados estruturados;
 - o DNS no template de configuração do cliente está fixo em `10.8.0.1`;
-- métricas de negócio têm uma condição invertida no `collectMetrics` que impede a atualização correta quando o banco retorna dados (apenas atualiza em caso de erro).
+- métricas de negócio têm uma condição invertida no `collectMetrics` que impede a atualização correta quando o banco retorna dados (apenas atualiza em caso de erro);
+- o health check de peers depende do utilitário `ping` do sistema operacional (Linux).
+- heartbeats de cluster são puramente informativos — não há lógica de timeout automático para marcar clusters como `offline`.
 
 ## Próximos passos naturais
 
@@ -294,4 +367,7 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - adicionar logs estruturados e observabilidade;
 - tornar o servidor DNS configurável por cluster;
 - permitir configuração de `AllowedIPs` por peer ou cluster;
-- corrigir a condição do `collectMetrics` no coletor de métricas de negócio.
+- corrigir a condição do `collectMetrics` no coletor de métricas de negócio;
+- expor status de clusters e peers nos endpoints de consulta;
+- implementar timeout automático para heartbeat (ex.: marcar cluster como `offline` se não receber heartbeat por N minutos);
+- expor métricas de status dos peers e clusters no Prometheus.

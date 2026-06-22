@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	_ "github.com/mattn/go-sqlite3"
+	"time"
+
 	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var _ domain.PeerRepository = (*PeerRepository)(nil)
@@ -35,6 +37,8 @@ func (r *PeerRepository) InitSchema(ctx context.Context) error {
 		public_key TEXT NOT NULL UNIQUE,
 		allocated_ip TEXT NOT NULL UNIQUE,
 		is_revoked INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'unknown',
+		last_seen DATETIME,
 		created_at DATETIME NOT NULL,
 		FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
 	);`
@@ -51,14 +55,15 @@ func (r *PeerRepository) InitSchema(ctx context.Context) error {
 
 func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 	query := `
-	INSERT INTO peers (id, cluster_id, name, public_key, allocated_ip, is_revoked, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO peers (id, cluster_id, name, public_key, allocated_ip, is_revoked, status, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		cluster_id = excluded.cluster_id,
 		name = excluded.name,
 		public_key = excluded.public_key,
 		allocated_ip = excluded.allocated_ip,
-		is_revoked = excluded.is_revoked;
+		is_revoked = excluded.is_revoked,
+		status = excluded.status;
 	`
 
 	isRevokedInt := 0
@@ -71,7 +76,12 @@ func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 		ipStr = peer.AllocatedIP.String()
 	}
 
-	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.ClusterID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, peer.CreatedAt)
+	status := peer.Status
+	if status == "" {
+		status = domain.StatusUnknown
+	}
+
+	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.ClusterID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, status, peer.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("falha ao salvar peer: %w", err)
 	}
@@ -86,9 +96,9 @@ func (r *PeerRepository) FindByID(ctx context.Context, id string) (*domain.Peer,
 	var peer domain.Peer
 	var ipStr string
 	var isRevokedInt int
-	
+
 	err := row.Scan(&peer.ID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.CreatedAt)
-	
+
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("peer não encontrado")
@@ -135,4 +145,49 @@ func (r *PeerRepository) CountByCluster(ctx context.Context, clusterID string) (
 		return 0, fmt.Errorf("falha ao contar peers: %w", err)
 	}
 	return count, nil
+}
+
+func (r *PeerRepository) UpdateHealthStatus(ctx context.Context, peerID, status string, lastSeen time.Time) error {
+	query := `UPDATE peers SET status = ?, last_seen = ? WHERE id = ?`
+
+	result, err := r.db.ExecContext(ctx, query, status, lastSeen, peerID)
+	if err != nil {
+		return fmt.Errorf("falha ao atualizar status de saúde do peer: %w", err)
+	}
+
+	affectedRows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("falha ao verificar atualização do status de saúde do peer: %w", err)
+	}
+
+	if affectedRows == 0 {
+		return fmt.Errorf("peer não encontrado")
+	}
+
+	return nil
+}
+
+func (r *PeerRepository) GetAll(ctx context.Context) ([]*domain.Peer, error) {
+	query := `SELECT id, name, public_key, allocated_ip, is_revoked, status, created_at FROM peers`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar peers: %w", err)
+	}
+	defer rows.Close()
+
+	var peers []*domain.Peer
+	for rows.Next() {
+		var peer domain.Peer
+		var ipStr string
+		var isRevokedInt int
+		var createdAt string
+		if err := rows.Scan(&peer.ID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.Status, &createdAt); err != nil {
+			return nil, fmt.Errorf("falha ao escanear peer: %w", err)
+		}
+		peer.AllocatedIP = net.ParseIP(ipStr)
+		peer.IsRevoked = isRevokedInt == 1
+		peer.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		peers = append(peers, &peer)
+	}
+	return peers, nil
 }

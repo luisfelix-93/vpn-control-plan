@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/luisfelix-93/vpn-control-plane/internal/infra/health"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/metrics"
+	"github.com/luisfelix-93/vpn-control-plane/internal/infra/network"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/sqlite"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/wireguard"
 	presentation "github.com/luisfelix-93/vpn-control-plane/internal/presentation/http"
@@ -49,8 +51,13 @@ func main() {
 	// Iniciamos a rotina que atualiza o estado interno do Prometheus a cada 15 segundos
 	metricsCollector := metrics.NewCollectorService(clusterRepo, peerRepo)
 	go metricsCollector.Start(context.Background(), 15*time.Second)
+	// 5. Pinger e Health-Check
+	pinger := network.NewPinger()
+	healthChecker := health.NewCheckerService(peerRepo, pinger)
+
+	go healthChecker.Start(context.Background(), 1*time.Minute)
 	// ----------------------------------------
-	// 5. API
+	// 6. API
 	peerHandler := presentation.NewPeerHandler(peerUseCase)
 	clusterHandler := presentation.NewClusterHandler(clusterUseCase)
 
@@ -58,6 +65,8 @@ func main() {
 	mux.HandleFunc("POST /clusters", middleware.MetricsMiddleware("/clusters", clusterHandler.Create))
 	mux.HandleFunc("POST /peers", middleware.MetricsMiddleware("/peers", peerHandler.Register))
 	mux.Handle("GET /metrics", promhttp.Handler())
+	// O roteador nativo do Go 1.22 aceita o wildcard {id} diretamente na string da rota
+	mux.HandleFunc("POST /clusters/{id}/heartbeat", middleware.MetricsMiddleware("/clusters/{id}/heartbeat", clusterHandler.Heartbeat))
 
 	port := ":8080"
 	log.Printf("VPN Control Plane (Multi-Cluster) rodando na porta %s...", port)

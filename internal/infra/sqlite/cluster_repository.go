@@ -23,7 +23,7 @@ func NewClusterRepository(db *sql.DB) *ClusterRepositoryImpl {
 }
 
 //InitClusterSchema cria a tabela principal de zonas de rede
-func (r *ClusterRepositoryImpl) InitSchema (ctx context.Context) error {
+func (r *ClusterRepositoryImpl) InitSchema(ctx context.Context) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS clusters (
 		id TEXT PRIMARY KEY,
@@ -32,16 +32,14 @@ func (r *ClusterRepositoryImpl) InitSchema (ctx context.Context) error {
 		interface_name TEXT NOT NULL,
 		server_pub_key TEXT NOT NULL,
 		server_endpoint TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'unknown',
+		last_heartbeat DATETIME,
 		created_at DATETIME NOT NULL
-	);
-	`
-	_, err := r.db.ExecContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("falha ao inicializar schema de clusters: %w", err)
-	}
-	return nil
-}
+	);`
 
+	_, err := r.db.ExecContext(ctx, query)
+	return err
+}
 // Save permite cadastrar ou atualizar um cluster
 func (r * ClusterRepositoryImpl) Save(ctx context.Context, cluster *domain.Cluster) error {
 	query := `
@@ -110,4 +108,21 @@ func (r *ClusterRepositoryImpl) GetAll(ctx context.Context) ([]*domain.Cluster, 
 		return nil, fmt.Errorf("erro ao iterar sobre os clusters: %w", err)
 	}
 	return clusters, nil
+}
+
+
+func (r *ClusterRepositoryImpl) RecordHeartbeat(ctx context.Context, id, status string, timestamp time.Time) error {
+	query := `UPDATE clusters SET status = ?, last_heartbeat = ? WHERE id = ?`
+	result, err := r.db.ExecContext(ctx, query, status, timestamp.Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("falha ao registrar heartbeat: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("falha ao obter número de linhas afetadas: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("cluster não encontrado")
+	}
+	return nil	
 }

@@ -44,3 +44,19 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(cluster)
 }
+
+func (h *ClusterHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	clusterID := r.PathValue("id")
+	if clusterID == "" {
+		http.Error(w, "ID do cluster não informado", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.useCase.ProcessHeartbeat(r.Context(), clusterID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ACK"))
+}
