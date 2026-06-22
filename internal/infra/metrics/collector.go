@@ -19,9 +19,9 @@ var (
 	TotalPeers = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "total_peers",
-			Help: "Total de peers por cluster",
+			Help: "Total de peers por cluster e por status",
 		},
-		[]string{"cluster_id"},
+		[]string{"cluster_id", "status"},
 	)
 )
 
