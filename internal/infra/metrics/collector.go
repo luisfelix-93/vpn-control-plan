@@ -94,10 +94,11 @@ func (s *CollectorService) collectMetrics(ctx context.Context) {
 		TotalClusters.Set(float64(len(clusters)))
 
 		for _, c := range clusters {
+			SetClusterHeartbeatState(c.ID, c.Status, c.LastHeartbeat)
 			count, errCount := s.peerRepo.CountByCluster(ctx, c.ID)
 			if errCount == nil {
-				// Atualiza o TotalPeers para cada cluster, assumindo esta rotina como fonte da verdade
-				TotalPeers.WithLabelValues(c.ID).Set(float64(count))
+				// Atualiza o total agregado por cluster no status unknown.
+				TotalPeers.WithLabelValues(c.ID, domain.StatusUnknown).Set(float64(count))
 			} else {
 				log.Printf("Erro ao contar peers para o cluster %s: %v\n", c.ID, errCount)
 			}
