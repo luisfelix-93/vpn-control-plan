@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/luisfelix-93/vpn-control-plane/internal/infra/metrics"
 	"github.com/luisfelix-93/vpn-control-plane/internal/usecase"
 )
 
@@ -27,7 +28,7 @@ type CreateClusterRequest struct {
 
 func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreateClusterRequest
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
@@ -48,14 +49,18 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ClusterHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	clusterID := r.PathValue("id")
 	if clusterID == "" {
+		metrics.IncClusterHeartbeatResult("unknown", "error")
 		http.Error(w, "ID do cluster não informado", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.useCase.ProcessHeartbeat(r.Context(), clusterID); err != nil {
+		metrics.IncClusterHeartbeatResult(clusterID, "error")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	metrics.IncClusterHeartbeatResult(clusterID, "success")
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ACK"))

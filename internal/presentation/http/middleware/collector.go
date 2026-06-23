@@ -22,8 +22,8 @@ var (
 	// Duration: Mede o tempo de duração das requisições agrupadas por método e rota
 	httpRequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:   "http_request_duration_seconds",
-			Help:   "Duração das requisições HTTP em segundos",
+			Name:    "http_request_duration_seconds",
+			Help:    "Duração das requisições HTTP em segundos",
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{"method", "route"},
@@ -59,6 +59,6 @@ func MetricsMiddleware(routePattern string, next http.HandlerFunc) http.HandlerF
 
 		// Atualiza o Prometheus em memória
 		httpRequestsTotal.WithLabelValues(r.Method, routePattern, statusStr).Inc()
-		httpRequestDuration.WithLabelValues(r.Method, routePattern, statusStr).Observe(duration)
+		httpRequestDuration.WithLabelValues(r.Method, routePattern).Observe(duration)
 	}
 }

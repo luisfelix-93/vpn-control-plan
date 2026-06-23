@@ -90,14 +90,16 @@ func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 }
 
 func (r *PeerRepository) FindByID(ctx context.Context, id string) (*domain.Peer, error) {
-	query := `SELECT id, name, public_key, allocated_ip, is_revoked, created_at FROM peers WHERE id = ?`
+	query := `SELECT id, cluster_id, name, public_key, allocated_ip, is_revoked, status, last_seen, created_at FROM peers WHERE id = ?`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var peer domain.Peer
 	var ipStr string
 	var isRevokedInt int
+	var lastSeen sql.NullString
+	var createdAt string
 
-	err := row.Scan(&peer.ID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.CreatedAt)
+	err := row.Scan(&peer.ID, &peer.ClusterID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.Status, &lastSeen, &createdAt)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -109,6 +111,10 @@ func (r *PeerRepository) FindByID(ctx context.Context, id string) (*domain.Peer,
 	// Hidratando a entidade com os tipos corretos
 	peer.AllocatedIP = net.ParseIP(ipStr)
 	peer.IsRevoked = isRevokedInt == 1
+	peer.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if lastSeen.Valid {
+		peer.LastSeen, _ = time.Parse(time.RFC3339, lastSeen.String)
+	}
 
 	return &peer, nil
 }
@@ -168,7 +174,7 @@ func (r *PeerRepository) UpdateHealthStatus(ctx context.Context, peerID, status 
 }
 
 func (r *PeerRepository) GetAll(ctx context.Context) ([]*domain.Peer, error) {
-	query := `SELECT id, name, public_key, allocated_ip, is_revoked, status, created_at FROM peers`
+	query := `SELECT id, cluster_id, name, public_key, allocated_ip, is_revoked, status, last_seen, created_at FROM peers`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("falha ao buscar peers: %w", err)
@@ -180,13 +186,17 @@ func (r *PeerRepository) GetAll(ctx context.Context) ([]*domain.Peer, error) {
 		var peer domain.Peer
 		var ipStr string
 		var isRevokedInt int
+		var lastSeen sql.NullString
 		var createdAt string
-		if err := rows.Scan(&peer.ID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.Status, &createdAt); err != nil {
+		if err := rows.Scan(&peer.ID, &peer.ClusterID, &peer.Name, &peer.PublicKey, &ipStr, &isRevokedInt, &peer.Status, &lastSeen, &createdAt); err != nil {
 			return nil, fmt.Errorf("falha ao escanear peer: %w", err)
 		}
 		peer.AllocatedIP = net.ParseIP(ipStr)
 		peer.IsRevoked = isRevokedInt == 1
 		peer.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if lastSeen.Valid {
+			peer.LastSeen, _ = time.Parse(time.RFC3339, lastSeen.String)
+		}
 		peers = append(peers, &peer)
 	}
 	return peers, nil

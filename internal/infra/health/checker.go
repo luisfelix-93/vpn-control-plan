@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/luisfelix-93/vpn-control-plane/internal/domain"
+	"github.com/luisfelix-93/vpn-control-plane/internal/infra/metrics"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/network"
 )
 
@@ -28,16 +29,21 @@ func (s *CheckerService) Start(ctx context.Context, interval time.Duration) {
 
 	for {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			log.Println("Encerrando Health Checker...")
 			return
-		case <- ticker.C:
+		case <-ticker.C:
 			s.checkPeers(ctx)
 		}
 	}
 }
 
 func (s *CheckerService) checkPeers(ctx context.Context) {
+	start := time.Now()
+	defer func() {
+		metrics.ObserveHealthCheckCycleDuration(time.Since(start))
+	}()
+
 	peers, err := s.peerRepo.GetAll(ctx)
 	if err != nil {
 		log.Println("Erro ao obter peers:", err)
@@ -53,7 +59,7 @@ func (s *CheckerService) checkPeers(ctx context.Context) {
 		}
 
 		wg.Add(1)
-		
+
 		// Dispara a checagem em uma goroutine separada
 		go func(peer *domain.Peer) {
 			defer wg.Done()
@@ -80,4 +86,12 @@ func (s *CheckerService) checkPeers(ctx context.Context) {
 
 	// Aguarda todos os pings finalizarem antes de encerrar este ciclo
 	wg.Wait()
+
+	updatedPeers, err := s.peerRepo.GetAll(ctx)
+	if err != nil {
+		log.Println("Erro ao obter peers para sincronizar métricas:", err)
+		return
+	}
+
+	metrics.SyncPeerHealthMetrics(updatedPeers)
 }
