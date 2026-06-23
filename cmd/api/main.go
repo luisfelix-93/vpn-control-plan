@@ -60,6 +60,7 @@ func main() {
 	// 6. API
 	peerHandler := presentation.NewPeerHandler(peerUseCase)
 	clusterHandler := presentation.NewClusterHandler(clusterUseCase)
+	latencyHandler := presentation.NewLatencyHandler(clusterUseCase)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /clusters", middleware.MetricsMiddleware("/clusters", clusterHandler.Create))
@@ -67,7 +68,7 @@ func main() {
 	mux.Handle("GET /metrics", promhttp.Handler())
 	// O roteador nativo do Go 1.22 aceita o wildcard {id} diretamente na string da rota
 	mux.HandleFunc("POST /clusters/{id}/heartbeat", middleware.MetricsMiddleware("/clusters/{id}/heartbeat", clusterHandler.Heartbeat))
-
+	mux.HandleFunc("POST /clusters/{id}/latencies", middleware.MetricsMiddleware("/clusters/{id}/latencies", latencyHandler.Report))
 	port := ":8080"
 	log.Printf("VPN Control Plane (Multi-Cluster) rodando na porta %s...", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
