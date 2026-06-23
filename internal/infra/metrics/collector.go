@@ -88,32 +88,33 @@ func (s *CollectorService) Start(ctx context.Context, interval time.Duration) {
 }
 
 func (s *CollectorService) collectMetrics(ctx context.Context) {
+	// 1. Coleta de Clusters e Contagem de Peers
 	clusters, err := s.clusterRepo.GetAll(ctx)
-	if err != nil {
-		log.Printf("Erro ao coletar métricas de clusters: %v\n", err)
-		return
+	if err == nil {
+		TotalClusters.Set(float64(len(clusters)))
+
+		for _, c := range clusters {
+			count, errCount := s.peerRepo.CountByCluster(ctx, c.ID)
+			if errCount == nil {
+				// Atualiza o TotalPeers para cada cluster, assumindo esta rotina como fonte da verdade
+				TotalPeers.WithLabelValues(c.ID).Set(float64(count))
+			} else {
+				log.Printf("Erro ao contar peers para o cluster %s: %v\n", c.ID, errCount)
+			}
+		}
+	} else {
+		log.Printf("Erro ao coletar métricas globais de clusters: %v\n", err)
 	}
 
-	TotalClusters.Set(float64(len(clusters)))
-
-	ClusterLastHeartbeatUnix.Reset()
-	ClusterStatus.Reset()
-	ClusterHeartbeatAgeSeconds.Reset()
-
-	now := time.Now()
-	for _, c := range clusters {
-		setClusterHeartbeatState(c.ID, c.Status, c.LastHeartbeat, now)
+	// 2. Coleta de Latência entre Clusters
+	latencies, err := s.clusterRepo.GetAllLatencies(ctx)
+	if err == nil {
+		for _, l := range latencies {
+			ClusterLatencyMS.WithLabelValues(l.SourceClusterID, l.TargetClusterID).Set(l.LatencyMS)
+		}
+	} else {
+		log.Printf("Erro ao coletar métricas de latência: %v\n", err)
 	}
-
-	peers, err := s.peerRepo.GetAll(ctx)
-	if err != nil {
-		log.Printf("Erro ao coletar métricas de peers: %v\n", err)
-		return
-	}
-
-	SyncPeerHealthMetrics(peers)
-
-	log.Println("Métricas de negócio sincronizadas com o banco de dados.")
 }
 
 func ObserveHealthCheckCycleDuration(duration time.Duration) {
@@ -216,29 +217,5 @@ func normalizeClusterStatus(status string) string {
 		return status
 	default:
 		return domain.ClusterStatusUnknown
-	}
-}
-
-func (s *CollectorService) collectLatency(ctx context.Context) {
-	// 1. Atualiza métricas de Clusters e Peers
-	clusters, err := s.clusterRepo.GetAll(ctx)
-	if err == nil {
-		TotalClusters.Set(float64(len(clusters)))
-		for _, c := range clusters {
-			count, _ := s.peerRepo.CountByCluster(ctx, c.ID)
-			TotalPeers.WithLabelValues(c.ID, domain.StatusUnknown).Set(float64(count))
-		}
-	} else {
-		log.Printf("Erro ao coletar métricas de clusters: %v\n", err)
-	}
-
-	// 2. Atualiza a matriz global de latência
-	latencies, err := s.clusterRepo.GetAllLatencies(ctx)
-	if err == nil {
-		for _, l := range latencies {
-			ClusterLatencyMS.WithLabelValues(l.SourceClusterID, l.TargetClusterID).Set(l.LatencyMS)
-		}
-	} else {
-		log.Printf("Erro ao coletar métricas de latência: %v\n", err)
 	}
 }
