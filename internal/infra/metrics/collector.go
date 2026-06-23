@@ -23,6 +23,10 @@ var (
 		},
 		[]string{"cluster_id", "status"},
 	)
+	ClusterLatencyMS = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "vpn_cluster_latency_ms",
+		Help: "Latência em milissegundos reportada entre dois nós da rede",
+	}, []string{"source_id", "target_id"})
 )
 
 // CollectorService encapsula a lógica de varredura de métricas
@@ -66,4 +70,28 @@ func (s *CollectorService) collectMetrics(ctx context.Context) {
 	}
 
 	log.Println("Métricas de negócio sincronizadas com o banco de dados.")
+}
+
+func (s *CollectorService) collectLatency(ctx context.Context) {
+	// 1. Atualiza métricas de Clusters e Peers
+	clusters, err := s.clusterRepo.GetAll(ctx)
+	if err == nil {
+		TotalClusters.Set(float64(len(clusters)))
+		for _, c := range clusters {
+			count, _ := s.peerRepo.CountByCluster(ctx, c.ID)
+			TotalPeers.WithLabelValues(c.ID).Set(float64(count))
+		}
+	} else {
+		log.Printf("Erro ao coletar métricas de clusters: %v\n", err)
+	}
+
+	// 2. Atualiza a matriz global de latência
+	latencies, err := s.clusterRepo.GetAllLatencies(ctx)
+	if err == nil {
+		for _, l := range latencies {
+			ClusterLatencyMS.WithLabelValues(l.SourceClusterID, l.TargetClusterID).Set(l.LatencyMS)
+		}
+	} else {
+		log.Printf("Erro ao coletar métricas de latência: %v\n", err)
+	}
 }

@@ -188,3 +188,28 @@ func (r *ClusterRepositoryImpl) GetLatencyFrom(ctx context.Context, sourceID str
 	}
 	return latencies, nil
 }
+// GetAllLatencies executa um full scan super leve na tabela de relacionamento
+func (r *ClusterRepositoryImpl) GetAllLatencies(ctx context.Context) ([]*domain.ClusterLatency, error) {
+	query := `SELECT source_id, target_id, latency_ms, measured_at FROM cluster_latencies`
+	
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar matriz global de latencias: %w", err)
+	}
+	defer rows.Close()
+
+	var latencies []*domain.ClusterLatency
+	for rows.Next() {
+		var l domain.ClusterLatency
+		var measuredAt string
+
+		if err := rows.Scan(&l.SourceClusterID, &l.TargetClusterID, &l.LatencyMS, &measuredAt); err != nil {
+			return nil, err
+		}
+		
+		l.MeasuredAt, _ = time.Parse(time.RFC3339, measuredAt)
+		latencies = append(latencies, &l)
+	}
+
+	return latencies, nil
+}

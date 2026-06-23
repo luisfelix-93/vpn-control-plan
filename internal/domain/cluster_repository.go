@@ -13,4 +13,5 @@ type ClusterRepository interface {
 
 	RecordLatency(ctx context.Context, latency *ClusterLatency) error
 	GetLatencyFrom(ctx context.Context, sourceID string) ([]*ClusterLatency, error)
+	GetAllLatencies(ctx context.Context) ([]*ClusterLatency, error)
 }
