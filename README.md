@@ -1,6 +1,6 @@
 # VPN Control Plane (Multi-Cluster)
 
-> **Versão atual:** `8de15e9` (branch `fix/bugs-fixing`)
+> **Versão atual:** `c5ea9be` (branch `fix/bugs-fixing`)
 
 API HTTP em Go para provisionar peers WireGuard com suporte a múltiplas zonas de rede (clusters). O serviço permite cadastrar clusters com configurações independentes (CIDR, interface, endpoint) e, dentro de cada cluster, provisionar peers com geração de chaves, IPAM dinâmico, aplicação na interface WireGuard e retorno do arquivo de configuração do cliente.
 
@@ -22,11 +22,17 @@ Antes de registrar peers, é necessário criar um cluster (zona de rede) com:
 
 ### Registro de Peer
 
-Ao receber uma requisição para criar um peer em um cluster existente:
+O registro de peers agora suporta dois modos de roteamento:
 
-1. Valida se o cluster informado existe.
+**Roteamento estático:** se `clusterId` for informado na requisição, o peer é vinculado ao cluster especificado (comportamento original).
+
+**Roteamento dinâmico:** se `clusterId` for omitido (`""`), o control plane seleciona automaticamente o melhor cluster disponível usando a estratégia de balanceamento configurada (atualmente `LeastConnectionStrategy` — seleciona o cluster com menor número de peers, ignorando clusters offline).
+
+Em ambos os modos, o fluxo é:
+
+1. Define o cluster alvo (estático ou via estratégia de balanceamento).
 2. Gera um par de chaves WireGuard para o cliente.
-3. Cria a entidade de domínio do peer vinculada ao cluster.
+3. Cria a entidade de domínio do peer vinculada ao cluster alvo.
 4. Consulta os IPs já usados **naquele cluster** no banco SQLite.
 5. Calcula o próximo IP disponível na sub-rede do cluster.
 6. Aplica o peer na interface WireGuard do host com o comando `wg set`.
@@ -39,6 +45,7 @@ O projeto está organizado em camadas:
 
 - `cmd/api`: ponto de entrada da aplicação.
 - `internal/domain`: entidades (`Peer`, `Cluster`, `ClusterLatency`), regras de negócio e contratos (`PeerRepository`, `ClusterRepository`, `VPNManager`).
+- `internal/domain/routing`: estratégias de balanceamento de carga entre clusters (`Strategy`, `LeastConnectionStrategy`).
 - `internal/usecase`: orquestração dos casos de uso (`PeerUseCase`, `ClusterUseCase`).
 - `internal/infra/sqlite`: persistência em SQLite (repositórios de peer e cluster).
 - `internal/infra/wireguard`: integração com a CLI do WireGuard.
@@ -134,9 +141,9 @@ Erros esperados:
 
 ### `POST /peers`
 
-Registra um novo dispositivo em um cluster existente.
+Registra um novo dispositivo em um cluster. O campo `clusterId` é **opcional** — se omitido, o control plane seleciona automaticamente o melhor cluster (Least Connection).
 
-Corpo da requisição:
+Corpo da requisição (com clusterId específico):
 
 ```json
 {
@@ -145,12 +152,28 @@ Corpo da requisição:
 }
 ```
 
-Exemplo com `curl`:
+Corpo da requisição (balanceamento automático):
+
+```json
+{
+  "name": "iphone-do-luis"
+}
+```
+
+Exemplo com `curl` (estático):
 
 ```bash
 curl -X POST http://localhost:8080/peers \
   -H "Content-Type: application/json" \
   -d '{"clusterId": "uuid-do-cluster", "name": "iphone-do-luis"}'
+```
+
+Exemplo com `curl` (automático):
+
+```bash
+curl -X POST http://localhost:8080/peers \
+  -H "Content-Type: application/json" \
+  -d '{"name": "iphone-do-luis"}'
 ```
 
 Exemplo no PowerShell:
@@ -160,14 +183,14 @@ Invoke-RestMethod \
   -Method Post \
   -Uri "http://localhost:8080/peers" \
   -ContentType "application/json" \
-  -Body '{"clusterId":"uuid-do-cluster","name":"iphone-do-luis"}'
+  -Body '{"name":"iphone-do-luis"}'
 ```
 
 Resposta de sucesso:
 
 - Status: `201 Created`
 - Content-Type: `text/plain`
-- Corpo: conteúdo do arquivo de configuração WireGuard do cliente
+- Corpo: conteúdo do arquivo de configuração WireGuard do cliente (ajustado para o cluster selecionado)
 
 Exemplo de resposta:
 
@@ -186,8 +209,8 @@ PersistentKeepalive = 25
 
 Erros esperados:
 
-- `400 Bad Request` para JSON inválido, `name` ou `clusterId` ausentes.
-- `500 Internal Server Error` para falhas na geração de chaves, validação do cluster, aplicação do peer, persistência ou geração do arquivo de configuração.
+- `400 Bad Request` para JSON inválido ou `name` ausente.
+- `500 Internal Server Error` para falhas na geração de chaves, seleção do cluster, aplicação do peer, persistência ou geração do arquivo de configuração.
 
 ---
 
@@ -400,11 +423,53 @@ Mecanismo passivo: um agente externo (ex.: script rodando em cada nó WireGuard)
 - Os dados são armazenados na tabela `cluster_latencies` e expostos na métrica `vpn_cluster_latency_ms`.
 - O `CollectorService` faz um full scan da tabela a cada 15s para atualizar a matriz completa de latência no Prometheus.
 
+## Roteamento e Balanceamento de Carga
+
+A partir dos commits mais recentes, o `PeerUseCase` suporta dois modos de roteamento para decidir em qual cluster um novo peer será provisionado:
+
+### Interface `routing.Strategy`
+
+```go
+type Strategy interface {
+    SelectBestCluster(clusters []*domain.Cluster, activePeersCount map[string]int) (*domain.Cluster, error)
+}
+```
+
+O contrato recebe a lista de clusters disponíveis e um mapa opcional de contagem de peers ativos por cluster, retornando o cluster mais adequado.
+
+### `LeastConnectionStrategy` (implementação atual)
+
+Seleciona o cluster com o menor número de peers, ignorando clusters com status `offline`. Se todos os clusters estiverem offline, retorna `ErrNoClustersAvailable`.
+
+```go
+type LeastConnectionStrategy struct{}
+
+func (s *LeastConnectionStrategy) SelectBestCluster(clusters, activePeersCount) (*domain.Cluster, error)
+```
+
+### Fluxo de Decisão
+
+```
+POST /peers { name: "...", clusterId: "..." }
+  └─ clusterId != "" → Roteamento Estático
+       └─ FindByID(clusterId) → cluster alvo
+  └─ clusterId == "" → Roteamento Dinâmico
+       └─ GetAll() → todos os clusters
+       └─ routingStrategy.SelectBestCluster(clusters, nil)
+            └─ LeastConnection: ignora offline, escolhe o de menos peers
+       └─ cluster alvo
+  └─ prossegue com IPAM, WireGuard, persistência...
+```
+
+### Próximas Estratégias (sugeridas)
+
+- **RoundRobinStrategy:** alterna entre clusters em ordem.
+- **LatencyAwareStrategy:** prefere clusters com menor latência (utilizando dados da tabela `cluster_latencies`).
+- **RandomStrategy:** seleciona um cluster aleatório entre os disponíveis.
+
 ## Métricas e observabilidade
 
 A partir da branch `feature/latency-metrics`, o projeto conta com um conjunto abrangente de métricas Prometheus, organizadas em três categorias:
-
-#> **Nota:** Esta branch (`fix/bugs-fixing`) corrige problemas identificados na seção 1 do documento `docs/issues.md`. As principais correções envolvem o tratamento de erros de timestamp nos repositórios e a simplificação do coletor de métricas, unificando `collectLatency` e `collectMetrics` e restaurando a população das métricas de heartbeat.
 
 ## Métricas RED (coletadas por requisição)
 
@@ -479,4 +544,6 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - consolidar a atualização de `total_peers` em um único ponto para evitar sobrescrita concorrente entre collector e checker;
 - adicionar verificação de `rows.Err()` nos métodos `GetUsedIPs`, `GetAll` (peer) e `GetAllLatencies` (cluster);
 - tratar erro do `PRAGMA foreign_keys = ON;` no `InitSchema`;
-- adicionar testes automatizados para `CheckerService`, `CollectorService`, `ProcessLatencyReport` e handlers.
+- adicionar testes automatizados para `CheckerService`, `CollectorService`, `ProcessLatencyReport` e handlers;
+- implementar novas estratégias de balanceamento (RoundRobin, LatencyAware, Random);
+- integrar o `activePeersCount` na `LeastConnectionStrategy` (atualmente recebe `nil`).
