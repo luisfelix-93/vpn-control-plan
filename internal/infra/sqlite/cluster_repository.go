@@ -76,7 +76,7 @@ func (r *ClusterRepositoryImpl) Save(ctx context.Context, cluster *domain.Cluste
 
 	_, err := r.db.ExecContext(ctx, query,
 		cluster.ID, cluster.Name, cluster.CIDR, cluster.InterfaceName,
-		cluster.ServerPubKey, cluster.ServerEndpoint, cluster.CreatedAt)
+		cluster.ServerPubKey, cluster.ServerEndpoint, cluster.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("falha ao salvar cluster: %w", err)
 	}
@@ -103,9 +103,18 @@ func (r *ClusterRepositoryImpl) FindByID(ctx context.Context, id string) (*domai
 		return nil, fmt.Errorf("falha ao buscar cluster: %w", err)
 	}
 
-	c.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao fazer parse de created_at do cluster %s: %w", id, err)
+	}
+	c.CreatedAt = parsedCreatedAt
+
 	if lastHeartbeat.Valid {
-		c.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHeartbeat.String)
+		parsedHeartbeat, err := time.Parse(time.RFC3339, lastHeartbeat.String)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de last_heartbeat do cluster %s: %w", id, err)
+		}
+		c.LastHeartbeat = parsedHeartbeat
 	}
 	return &c, nil
 }
@@ -128,9 +137,18 @@ func (r *ClusterRepositoryImpl) GetAll(ctx context.Context) ([]*domain.Cluster, 
 		if err := rows.Scan(&c.ID, &c.Name, &c.CIDR, &c.InterfaceName, &c.ServerPubKey, &c.ServerEndpoint, &c.Status, &lastHeartbeat, &createdAt); err != nil {
 			return nil, fmt.Errorf("falha ao escanear cluster: %w", err)
 		}
-		c.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de created_at do cluster %s: %w", c.ID, err)
+		}
+		c.CreatedAt = parsedCreatedAt
+
 		if lastHeartbeat.Valid {
-			c.LastHeartbeat, _ = time.Parse(time.RFC3339, lastHeartbeat.String)
+			parsedHeartbeat, err := time.Parse(time.RFC3339, lastHeartbeat.String)
+			if err != nil {
+				return nil, fmt.Errorf("falha ao fazer parse de last_heartbeat do cluster %s: %w", c.ID, err)
+			}
+			c.LastHeartbeat = parsedHeartbeat
 		}
 		clusters = append(clusters, &c)
 	}
@@ -187,7 +205,11 @@ func (r *ClusterRepositoryImpl) GetLatencyFrom(ctx context.Context, sourceID str
 		if err := rows.Scan(&l.SourceClusterID, &l.TargetClusterID, &l.LatencyMS, &measuredAt); err != nil {
 			return nil, fmt.Errorf("falha ao escanear latência: %w", err)
 		}
-		l.MeasuredAt, _ = time.Parse(time.RFC3339, measuredAt)
+		parsedMeasuredAt, err := time.Parse(time.RFC3339, measuredAt)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de measured_at na latência %s->%s: %w", l.SourceClusterID, l.TargetClusterID, err)
+		}
+		l.MeasuredAt = parsedMeasuredAt
 		latencies = append(latencies, &l)
 	}
 	if err := rows.Err(); err != nil {
@@ -215,7 +237,11 @@ func (r *ClusterRepositoryImpl) GetAllLatencies(ctx context.Context) ([]*domain.
 			return nil, err
 		}
 
-		l.MeasuredAt, _ = time.Parse(time.RFC3339, measuredAt)
+		parsedMeasuredAt, err := time.Parse(time.RFC3339, measuredAt)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de measured_at na latência %s->%s: %w", l.SourceClusterID, l.TargetClusterID, err)
+		}
+		l.MeasuredAt = parsedMeasuredAt
 		latencies = append(latencies, &l)
 	}
 

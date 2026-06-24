@@ -81,7 +81,7 @@ func (r *PeerRepository) Save(ctx context.Context, peer *domain.Peer) error {
 		status = domain.StatusUnknown
 	}
 
-	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.ClusterID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, status, peer.CreatedAt)
+	_, err := r.db.ExecContext(ctx, query, peer.ID, peer.ClusterID, peer.Name, peer.PublicKey, ipStr, isRevokedInt, status, peer.CreatedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("falha ao salvar peer: %w", err)
 	}
@@ -111,9 +111,19 @@ func (r *PeerRepository) FindByID(ctx context.Context, id string) (*domain.Peer,
 	// Hidratando a entidade com os tipos corretos
 	peer.AllocatedIP = net.ParseIP(ipStr)
 	peer.IsRevoked = isRevokedInt == 1
-	peer.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+
+	parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao fazer parse de created_at do peer %s: %w", peer.ID, err)
+	}
+	peer.CreatedAt = parsedCreatedAt
+
 	if lastSeen.Valid {
-		peer.LastSeen, _ = time.Parse(time.RFC3339, lastSeen.String)
+		parsedLastSeen, err := time.Parse(time.RFC3339, lastSeen.String)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de last_seen do peer %s: %w", peer.ID, err)
+		}
+		peer.LastSeen = parsedLastSeen
 	}
 
 	return &peer, nil
@@ -156,7 +166,7 @@ func (r *PeerRepository) CountByCluster(ctx context.Context, clusterID string) (
 func (r *PeerRepository) UpdateHealthStatus(ctx context.Context, peerID, status string, lastSeen time.Time) error {
 	query := `UPDATE peers SET status = ?, last_seen = ? WHERE id = ?`
 
-	result, err := r.db.ExecContext(ctx, query, status, lastSeen, peerID)
+	result, err := r.db.ExecContext(ctx, query, status, lastSeen.Format(time.RFC3339), peerID)
 	if err != nil {
 		return fmt.Errorf("falha ao atualizar status de saúde do peer: %w", err)
 	}
@@ -193,9 +203,19 @@ func (r *PeerRepository) GetAll(ctx context.Context) ([]*domain.Peer, error) {
 		}
 		peer.AllocatedIP = net.ParseIP(ipStr)
 		peer.IsRevoked = isRevokedInt == 1
-		peer.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+
+		parsedCreatedAt, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao fazer parse de created_at do peer %s: %w", peer.ID, err)
+		}
+		peer.CreatedAt = parsedCreatedAt
+
 		if lastSeen.Valid {
-			peer.LastSeen, _ = time.Parse(time.RFC3339, lastSeen.String)
+			parsedLastSeen, err := time.Parse(time.RFC3339, lastSeen.String)
+			if err != nil {
+				return nil, fmt.Errorf("falha ao fazer parse de last_seen do peer %s: %w", peer.ID, err)
+			}
+			peer.LastSeen = parsedLastSeen
 		}
 		peers = append(peers, &peer)
 	}
