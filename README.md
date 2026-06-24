@@ -1,6 +1,6 @@
 # VPN Control Plane (Multi-Cluster)
 
-> **Versão atual:** `08abfe0` (branch `feature/latency-metrics`)
+> **Versão atual:** `8de15e9` (branch `fix/bugs-fixing`)
 
 API HTTP em Go para provisionar peers WireGuard com suporte a múltiplas zonas de rede (clusters). O serviço permite cadastrar clusters com configurações independentes (CIDR, interface, endpoint) e, dentro de cada cluster, provisionar peers com geração de chaves, IPAM dinâmico, aplicação na interface WireGuard e retorno do arquivo de configuração do cliente.
 
@@ -404,7 +404,9 @@ Mecanismo passivo: um agente externo (ex.: script rodando em cada nó WireGuard)
 
 A partir da branch `feature/latency-metrics`, o projeto conta com um conjunto abrangente de métricas Prometheus, organizadas em três categorias:
 
-### Métricas RED (coletadas por requisição)
+#> **Nota:** Esta branch (`fix/bugs-fixing`) corrige problemas identificados na seção 1 do documento `docs/issues.md`. As principais correções envolvem o tratamento de erros de timestamp nos repositórios e a simplificação do coletor de métricas, unificando `collectLatency` e `collectMetrics` e restaurando a população das métricas de heartbeat.
+
+## Métricas RED (coletadas por requisição)
 
 Coletadas via middleware HTTP para todas as rotas registradas.
 
@@ -442,6 +444,8 @@ Populadas pelo `CollectorService` a cada 15 segundos com base no estado atual do
 |---------|------|--------|-----------|
 | `vpn_cluster_latency_ms` | GaugeVec | `source_id`, `target_id` | Latência em milissegundos reportada entre dois nós da rede |
 
+> Nota técnica: Diferente da branch `feature/latency-metrics`, onde `collectLatency` existia como função separada e nunca era chamada, agora a coleta de latência foi incorporada diretamente no `collectMetrics`, executando a cada 15 segundos. Além disso, o `collectMetrics` foi simplificado: removida a dependência de `SyncPeerHealthMetrics` (que continua sendo chamada pelo health checker a cada 1 minuto), e as métricas de heartbeat foram restauradas via `SetClusterHeartbeatState`.
+
 ### Endpoint
 
 Todas as métricas são expostas em `GET /metrics` no formato Prometheus, prontas para coleta pelo Prometheus e visualização no Grafana.
@@ -458,8 +462,10 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - o health check de peers depende do utilitário `ping` do sistema operacional (Linux);
 - heartbeats de cluster são puramente informativos — não há lógica de timeout automático para marcar clusters como `offline`;
 - latências entre clusters são puramente informativas — não há alertas automáticos baseados em latência alta;
-- o `collectLatency` duplica a lógica de atualização de `TotalClusters` e `TotalPeers` que já existe no `collectMetrics` — pode causar inconsistência se a ordem de chamada não for controlada;
-- a métrica `total_peers` é atualizada tanto pelo `collectMetrics` (via `SyncPeerHealthMetrics`) quanto pelo `collectLatency` (com label `StatusUnknown`) — há risco de sobrescrita concorrente.
+- a métrica `total_peers` é atualizada tanto pelo `collectMetrics` (a cada 15s, label `StatusUnknown`) quanto pelo `SyncPeerHealthMetrics` no checker (a cada 1min, labels `online`/`offline`/`unknown`) — há risco de sobrescrita concorrente entre as duas goroutines;
+- `PeerRepository.GetUsedIPs` e `GetAll` ainda não verificam `rows.Err()` após iteração;
+- `ClusterRepositoryImpl.GetAllLatencies` também não verifica `rows.Err()`;
+- `InitSchema` do peer repository ignora erro do `PRAGMA foreign_keys = ON;`.
 
 ## Próximos passos naturais
 
@@ -470,6 +476,7 @@ O projeto está funcional como prova de conceito, mas ainda tem algumas limitaç
 - tornar o servidor DNS configurável por cluster;
 - permitir configuração de `AllowedIPs` por peer ou cluster;
 - implementar timeout automático para heartbeat (ex.: marcar cluster como `offline` se não receber heartbeat por N minutos);
-- migrar a coleta de latência para usar apenas `collectLatency` e remover duplicação com `collectMetrics`;
-- consolidar a atualização de `total_peers` em um único ponto para evitar sobrescrita concorrente;
+- consolidar a atualização de `total_peers` em um único ponto para evitar sobrescrita concorrente entre collector e checker;
+- adicionar verificação de `rows.Err()` nos métodos `GetUsedIPs`, `GetAll` (peer) e `GetAllLatencies` (cluster);
+- tratar erro do `PRAGMA foreign_keys = ON;` no `InitSchema`;
 - adicionar testes automatizados para `CheckerService`, `CollectorService`, `ProcessLatencyReport` e handlers.
