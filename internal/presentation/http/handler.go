@@ -31,8 +31,8 @@ func (h *PeerHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.ClusterID == "" {
-		http.Error(w, "Os campos 'name' e 'clusterId' são obrigatórios", http.StatusBadRequest)
+	if req.Name == "" {
+		http.Error(w, "O campo 'name' é obrigatório", http.StatusBadRequest)
 		return
 	}
 

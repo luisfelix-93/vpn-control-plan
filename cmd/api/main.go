@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/luisfelix-93/vpn-control-plane/internal/domain/routing"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/health"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/metrics"
 	"github.com/luisfelix-93/vpn-control-plane/internal/infra/network"
@@ -45,7 +46,8 @@ func main() {
 	vpnAdapter := wireguard.NewCLIAdapter()
 
 	// 4. Orquestração (Injetando as novas dependências)
-	peerUseCase := usecase.NewPeerUseCase(peerRepo, clusterRepo, vpnAdapter)
+	leastConStrategy := routing.NewLeastConnectionStrategy()
+	peerUseCase := usecase.NewPeerUseCase(peerRepo, clusterRepo, vpnAdapter, leastConStrategy)
 	clusterUseCase := usecase.NewClusterUseCase(clusterRepo)
 	// --- SETUP DAS MÉTRICAS EM BACKGROUND ---
 	// Iniciamos a rotina que atualiza o estado interno do Prometheus a cada 15 segundos
